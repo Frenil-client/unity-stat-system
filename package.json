@@ -1,0 +1,25 @@
+{
+  "name": "com.frenil.stat-system",
+  "version": "1.0.0",
+  "displayName": "Generic Stat System",
+  "description": "제네릭 기반 RPG 캐릭터 스탯 시스템. int/long/float/double 통합 처리, StatId enum ↔ uint 양방향 매핑, Reflection 필드 캐싱, MaxValue 무결성 검사.",
+  "unity": "2021.2",
+  "keywords": [
+    "rpg",
+    "stat",
+    "gameplay",
+    "system"
+  ],
+  "author": {
+    "name": "정휘현 (Frenil)",
+    "email": "silsen@naver.com",
+    "url": "https://github.com/Frenil-client"
+  },
+  "samples": [
+    {
+      "displayName": "Stat Usage Example",
+      "description": "StatValue / StatId / Stat 사용 예시 (MonoBehaviour)",
+      "path": "Example"
+    }
+  ]
+}
