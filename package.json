@@ -19,7 +19,7 @@
     {
       "displayName": "Stat Usage Example",
       "description": "StatValue / StatId / Stat 사용 예시 (MonoBehaviour)",
-      "path": "Example"
+      "path": "Samples~/StatExample"
     }
   ]
 }

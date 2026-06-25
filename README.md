@@ -90,6 +90,32 @@ Example/
 └─ StatExample.cs          Unity MonoBehaviour 사용 예시
 ```
 
+## 설치
+
+### UPM (Package Manager) — 권장
+`Window ▸ Package Manager ▸ + ▸ Add package from git URL` 에 입력:
+
+```
+https://github.com/Frenil-client/unity-stat-system.git
+```
+
+또는 `Packages/manifest.json` 에 직접 추가:
+
+```json
+"com.frenil.stat-system": "https://github.com/Frenil-client/unity-stat-system.git"
+```
+
+### 드롭인
+`Runtime/` 폴더를 프로젝트 `Assets/` 아래에 복사합니다. (순수 C# — 외부 의존 없음)
+
+### 샘플
+Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본: `Samples~/StatExample`).
+
+## 테스트
+
+`Window ▸ General ▸ Test Runner ▸ EditMode ▸ Run All`
+(`com.unity.test-framework` 필요 · EditMode 테스트 20종 — StatValue / StatRegistry / Stat)
+
 ## 요구 사항
 
 - Unity 2021.2+ (C# 9.0)
