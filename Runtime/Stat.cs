@@ -8,54 +8,53 @@ namespace StatSystem
     /// <summary>
     /// 캐릭터의 모든 스탯을 보관하고 관리하는 클래스.
     ///
-  /// 구조:
+    /// 구조:
     /// - public 필드: 이름으로 직접 접근 (stat.AttackPower.Value += 100)
     /// - Dictionary: StatId 기반 일괄 처리 (버프 합산, 전투력 계산 등)
     /// - Reflection 캐싱: 초기화 비용을 static 생성자에서 한 번만 지불
     /// </summary>
     public partial class Stat
     {
-        //공격력 / 마력 
-        public StatValue<long>   AttackPower;
-        public StatValue<long>   MagicAttack;
-        public StatValue<double> AttackPowerPercent;
-        public StatValue<double> MagicAttackPercent;
-        public StatValue<long>   Defense;
-        public StatValue<double> DefensePercent;
+        //공격력 / 마력
+        public StatSlot AttackPower;
+        public StatSlot MagicAttack;
+        public StatSlot AttackPowerPercent;
+        public StatSlot MagicAttackPercent;
+        public StatSlot Defense;
+        public StatSlot DefensePercent;
 
-        //데미지 / 크리티컬 
-        public StatValue<double> Damage;            // 일반 데미지 %
-        public StatValue<double> FinalDamage;       // 최종 데미지 %
-        public StatValue<double> CriticalRate;      // 크리티컬 확률 %
-        public StatValue<double> CriticalDamage;    // 크리티컬 데미지 %
+        //데미지 / 크리티컬
+        public StatSlot Damage;            // 일반 데미지 %
+        public StatSlot FinalDamage;       // 최종 데미지 %
+        public StatSlot CriticalRate;      // 크리티컬 확률 %
+        public StatSlot CriticalDamage;    // 크리티컬 데미지 %
 
-        //방어 / 생존 
-        public StatValue<long>   StatusResistance;
+        //방어 / 생존
+        public StatSlot StatusResistance;
 
-        //보스 / 방어율 무시 
-        public StatValue<double> BossDamage;            // 보스 데미지 %
-        public StatValue<double> IgnoreDefense;         // 방어율 무시 %
-        public StatValue<double> NormalMonsterDamage;   // 일반 몬스터 데미지 %
-        public StatValue<double> IgnoreElemental;       // 속성 내성 무시 %
+        //보스 / 방어율 무시
+        public StatSlot BossDamage;            // 보스 데미지 %
+        public StatSlot IgnoreDefense;         // 방어율 무시 %
+        public StatSlot NormalMonsterDamage;   // 일반 몬스터 데미지 %
+        public StatSlot IgnoreElemental;       // 속성 내성 무시 %
 
-        //이동 / 기타 
-        public StatValue<long>   MoveSpeed;
-        public StatValue<long>   JumpPower;
-        public StatValue<long>   AttackSpeed;       // 공격 속도 단계 (1~8)
+        //이동 / 기타
+        public StatSlot MoveSpeed;
+        public StatSlot JumpPower;
+        public StatSlot AttackSpeed;       // 공격 속도 단계 (1~8)
 
-        //StatId 기반 Dictionary (일괄 처리용) 
-        private Dictionary<StatId, StatValue<long>>   _longStats   = new();
-        private Dictionary<StatId, StatValue<double>> _doubleStats = new();
+        //StatId -> FieldInfo 매핑 (일괄 처리용). 값의 복사본이 아니라 필드 위치를 캐싱하므로
+        //stat.AttackPower.Value = x 같은 직접 수정에도 항상 최신 값을 반영한다.
+        private readonly Dictionary<StatId, FieldInfo> _statFields = new();
 
-        //Reflection 필드 캐싱 (static - 한 번만 초기화) 
+        //Reflection 필드 캐싱 (static - 한 번만 초기화)
         private static readonly Dictionary<string, FieldInfo> _fieldCache;
 
         static Stat()
         {
             _fieldCache = typeof(Stat)
                 .GetFields(BindingFlags.Public | BindingFlags.Instance)
-                .Where(f => f.FieldType.IsGenericType &&
-                            f.FieldType.GetGenericTypeDefinition() == typeof(StatValue<>))
+                .Where(f => f.FieldType == typeof(StatSlot))
                 .ToDictionary(f => f.Name, f => f);
         }
 
@@ -66,89 +65,95 @@ namespace StatSystem
         public Stat(Stat source)
         {
             Init();
-            foreach (var kv in _longStats)
-                kv.Value.Value = source._longStats[kv.Key].Value;
-            foreach (var kv in _doubleStats)
-                kv.Value.Value = source._doubleStats[kv.Key].Value;
+            foreach (var kv in _statFields)
+                kv.Value.SetValue(this, kv.Value.GetValue(source));
         }
 
         private void Init()
         {
-            AttackPower        = new StatValue<long>(StatId.AttackPower,        0);
-            MagicAttack        = new StatValue<long>(StatId.MagicAttack,        0);
-            AttackPowerPercent = new StatValue<double>(StatId.AttackPowerPercent, 0);
-            MagicAttackPercent = new StatValue<double>(StatId.MagicAttackPercent, 0);
-            Defense            = new StatValue<long>(StatId.Defense,            0);
-            DefensePercent     = new StatValue<double>(StatId.DefensePercent,   0);
+            AttackPower        = new StatSlot(StatId.AttackPower,        0L);
+            MagicAttack        = new StatSlot(StatId.MagicAttack,        0L);
+            AttackPowerPercent = new StatSlot(StatId.AttackPowerPercent, 0.0);
+            MagicAttackPercent = new StatSlot(StatId.MagicAttackPercent, 0.0);
+            Defense            = new StatSlot(StatId.Defense,            0L);
+            DefensePercent     = new StatSlot(StatId.DefensePercent,     0.0);
 
-            Damage         = new StatValue<double>(StatId.Damage,         0);
-            FinalDamage    = new StatValue<double>(StatId.FinalDamage,    0);
-            CriticalRate   = new StatValue<double>(StatId.CriticalRate,   0);
-            CriticalDamage = new StatValue<double>(StatId.CriticalDamage, 0);
+            Damage         = new StatSlot(StatId.Damage,         0.0);
+            FinalDamage    = new StatSlot(StatId.FinalDamage,    0.0);
+            CriticalRate   = new StatSlot(StatId.CriticalRate,   0.0);
+            CriticalDamage = new StatSlot(StatId.CriticalDamage, 0.0);
 
-            StatusResistance = new StatValue<long>(StatId.StatusResistance, 0);
+            StatusResistance = new StatSlot(StatId.StatusResistance, 0L);
 
-            BossDamage          = new StatValue<double>(StatId.BossDamage,          0);
-            IgnoreDefense       = new StatValue<double>(StatId.IgnoreDefense,       0);
-            NormalMonsterDamage = new StatValue<double>(StatId.NormalMonsterDamage, 0);
-            IgnoreElemental     = new StatValue<double>(StatId.IgnoreElemental,     0);
+            BossDamage          = new StatSlot(StatId.BossDamage,          0.0);
+            IgnoreDefense       = new StatSlot(StatId.IgnoreDefense,       0.0);
+            NormalMonsterDamage = new StatSlot(StatId.NormalMonsterDamage, 0.0);
+            IgnoreElemental     = new StatSlot(StatId.IgnoreElemental,     0.0);
 
-            MoveSpeed       = new StatValue<long>(StatId.MoveSpeed,   0);
-            JumpPower       = new StatValue<long>(StatId.JumpPower,   0);
-            AttackSpeed     = new StatValue<long>(StatId.AttackSpeed, 0);
+            MoveSpeed   = new StatSlot(StatId.MoveSpeed,   0L);
+            JumpPower   = new StatSlot(StatId.JumpPower,   0L);
+            AttackSpeed = new StatSlot(StatId.AttackSpeed, 0L);
 
-            BuildDictionary();
+            BuildFieldIndex();
         }
 
         /// <summary>
-        /// Reflection 캐시로 StatId -> StatValue Dictionary를 구성합니다.
+        /// Reflection 캐시로 StatId -> FieldInfo Dictionary를 구성합니다.
         /// UID 기반 일괄 처리(버프 합산, 전투력 계산 등)에 사용됩니다.
         /// </summary>
-        private void BuildDictionary()
+        private void BuildFieldIndex()
         {
-            _longStats.Clear();
-            _doubleStats.Clear();
-
-            foreach (var kv in _fieldCache)
+            _statFields.Clear();
+            foreach (var fi in _fieldCache.Values)
             {
-                var v = kv.Value.GetValue(this);
-                if (v is StatValue<long>   ls) _longStats[ls.Id]   = ls;
-                else if (v is StatValue<double> ds) _doubleStats[ds.Id] = ds;
+                var slot = (StatSlot)fi.GetValue(this);
+                _statFields[slot.Id] = fi;
             }
         }
 
-        //StatId 기반 접근 API 
+        //StatId 기반 접근 API
 
         public double GetValue(StatId id)
         {
-            if (_longStats.TryGetValue(id, out var ls))   return ls.Value;
-            if (_doubleStats.TryGetValue(id, out var ds)) return ds.Value;
-            return 0;
+            if (!_statFields.TryGetValue(id, out var fi)) return 0;
+            return ((StatSlot)fi.GetValue(this)).Value.ToDouble();
         }
 
         public bool SetValue(StatId id, double value)
         {
-            if (_longStats.TryGetValue(id, out var ls))   { ls.Value = (long)value; return true; }
-            if (_doubleStats.TryGetValue(id, out var ds)) { ds.Value = value;        return true; }
-            return false;
+            if (!_statFields.TryGetValue(id, out var fi)) return false;
+            var slot = (StatSlot)fi.GetValue(this);
+            slot.Value = StatValue.FromFloat(value);
+            fi.SetValue(this, slot);
+            return true;
         }
 
         public bool AddValue(StatId id, double value)
         {
-            if (_longStats.TryGetValue(id, out var ls))   { ls.Value += (long)value; return true; }
-            if (_doubleStats.TryGetValue(id, out var ds)) { ds.Value += value;        return true; }
-            return false;
+            if (!_statFields.TryGetValue(id, out var fi)) return false;
+            var slot = (StatSlot)fi.GetValue(this);
+            slot.Value = slot.Value + StatValue.FromFloat(value);
+            fi.SetValue(this, slot);
+            return true;
         }
 
-        public Dictionary<StatId, StatValue<long>>   GetLongStats()   => new(_longStats);
-        public Dictionary<StatId, StatValue<double>> GetDoubleStats() => new(_doubleStats);
+        /// <summary>등록된 모든 StatId -> StatSlot 스냅샷.</summary>
+        public Dictionary<StatId, StatSlot> GetAllStats()
+        {
+            var result = new Dictionary<StatId, StatSlot>();
+            foreach (var kv in _statFields)
+                result[kv.Key] = (StatSlot)kv.Value.GetValue(this);
+            return result;
+        }
 
         public bool IsEqual(Stat other)
         {
-            foreach (var kv in _longStats)
-                if (kv.Value.Value != other._longStats[kv.Key].Value) return false;
-            foreach (var kv in _doubleStats)
-                if (Math.Abs(kv.Value.Value - other._doubleStats[kv.Key].Value) > double.Epsilon) return false;
+            foreach (var kv in _statFields)
+            {
+                var mine   = (StatSlot)kv.Value.GetValue(this);
+                var theirs = (StatSlot)kv.Value.GetValue(other);
+                if (mine.Value != theirs.Value) return false;
+            }
             return true;
         }
     }

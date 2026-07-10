@@ -30,15 +30,15 @@ namespace StatSystem.Example
             Debug.Log($"[Registry] 이름: {name}, UID: {uid}, byUid: {byUid}, byStr: {byStr}");
         }
 
-        //2. StatValue<T> - 값 관리 및 MaxValue 클램프 
+        //2. StatSlot - 값 관리 및 MaxValue 클램프
         private void Example_StatValue()
         {
-            var atk = new StatValue<long>(StatId.AttackPower, 3000);
+            var atk = new StatSlot(StatId.AttackPower, 3000L);
             atk.Value += 500;
             Debug.Log($"[StatValue] AttackPower: {atk.Value}"); // 3500
 
-            // 생성자: StatValue(StatId id, T value, T maxValue)
-            var def = new StatValue<long>(StatId.Defense, 100, 200L);
+            // 생성자: StatSlot(StatId id, StatValue value, StatValue maxValue)
+            var def = new StatSlot(StatId.Defense, 100L, 200L);
             def.Value = 999; // 200으로 자동 클램프
             Debug.Log($"[Clamp] Defense: {def.Value}"); // 200
 
@@ -53,12 +53,12 @@ namespace StatSystem.Example
             }
         }
 
-        //3. 연산자 오버로딩 - 장비 / 버프 스탯 합산 (+, - 만 지원) 
+        //3. 연산자 오버로딩 - 장비 / 버프 스탯 합산 (+, - 만 지원)
         private void Example_Operator()
         {
-            var baseAtk    = new StatValue<long>(StatId.AttackPower, 500);
-            var equipBonus = new StatValue<long>(StatId.AttackPower, 200);
-            var buffBonus  = new StatValue<long>(StatId.AttackPower, 100);
+            var baseAtk    = new StatSlot(StatId.AttackPower, 500L);
+            var equipBonus = new StatSlot(StatId.AttackPower, 200L);
+            var buffBonus  = new StatSlot(StatId.AttackPower, 100L);
 
             var total = baseAtk + equipBonus + buffBonus;
             Debug.Log($"[Operator] 총 공격력: {total.Value}"); // 800

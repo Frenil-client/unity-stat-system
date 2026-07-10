@@ -1,72 +1,120 @@
 using System;
 using NUnit.Framework;
+using UnityEngine.TestTools.Constraints;
+using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace StatSystem.Tests
 {
     public class StatValueTests
     {
         [Test]
-        public void Value_ExceedingMax_ClampsToMax()
+        public void Precision_ZeroPointOnePlusZeroPointTwo_EqualsZeroPointThree()
         {
-            var def = new StatValue<long>(StatId.Defense, 100, 200L);
-            def.Value = 999;
-            Assert.AreEqual(200L, def.Value);
+            StatValue a = 0.1;
+            StatValue b = 0.2;
+            StatValue expected = 0.3;
+            Assert.AreEqual(expected, a + b);
         }
 
         [Test]
-        public void MaxValue_BelowCurrentValue_Throws()
+        public void FromInt_ToFloat_Roundtrips()
         {
-            var def = new StatValue<long>(StatId.Defense, 100, 200L);
-            Assert.Throws<ArgumentException>(() => def.MaxValue = 50);
+            StatValue v = StatValue.FromInt(1234);
+            Assert.AreEqual(1234f, v.ToFloat());
         }
 
         [Test]
-        public void Constructor_MaxBelowValue_Throws()
+        public void FromFloat_ToDouble_Roundtrips()
         {
-            Assert.Throws<ArgumentException>(() => new StatValue<long>(StatId.Defense, 100, 50L));
+            StatValue v = StatValue.FromFloat(12.3456);
+            Assert.AreEqual(12.3456, v.ToDouble(), 0.00001);
         }
 
         [Test]
-        public void ValueDecimal_TracksValue()
+        public void ToInt_Truncates()
         {
-            var ap = new StatValue<long>(StatId.AttackPower, 1234);
-            Assert.AreEqual(1234m, ap.ValueDecimal);
+            StatValue v = StatValue.FromFloat(4.9999);
+            Assert.AreEqual(4L, v.ToInt());
         }
 
         [Test]
-        public void StatUid_MatchesEnumValue()
+        public void Round_RoundsToNearest()
         {
-            var ap = new StatValue<long>(StatId.AttackPower, 0);
-            Assert.AreEqual((uint)StatId.AttackPower, ap.StatUid);
+            StatValue v = StatValue.FromFloat(4.9999);
+            Assert.AreEqual(5L, v.Round());
         }
 
         [Test]
-        public void Operator_Add_SumsValues_AndPreservesId()
+        public void ApplyPercent_AddsPercentageOfBase()
         {
-            var a = new StatValue<long>(StatId.AttackPower, 100, 1000L);
-            var b = new StatValue<long>(StatId.AttackPower, 250, 9999L);
-            var sum = a + b;
-            Assert.AreEqual(350L, sum.Value);
-            Assert.AreEqual(StatId.AttackPower, sum.Id);
+            StatValue baseValue = 1000L;
+            StatValue percent = 0.30; // 30%
+            StatValue expected = 1300L;
+            Assert.AreEqual(expected, StatValue.ApplyPercent(baseValue, percent));
         }
 
         [Test]
-        public void Operator_Subtract_SubtractsValues()
+        public void ApplyPercent_RoundTripAccuracy()
         {
-            var a = new StatValue<long>(StatId.AttackPower, 500, 1000L);
-            var b = new StatValue<long>(StatId.AttackPower, 200, 1000L);
-            var diff = a - b;
-            Assert.AreEqual(300L, diff.Value);
+            StatValue baseValue = 12345L;
+            StatValue percent = 0.1; // 10%
+            StatValue expected = 13579.5; // 12345 * 1.1
+            Assert.AreEqual(expected, StatValue.ApplyPercent(baseValue, percent));
         }
 
-        // 합산 결과가 좌변의 MaxValue 를 넘으면, 결과를 담을 StatValue 생성자가
-        // MaxValue < Value 무결성 검사에 걸려 예외를 던진다 (설계상 의도된 동작).
         [Test]
-        public void Operator_Add_SumExceedingLeftMax_Throws()
+        public void Comparison_Operators_OrderCorrectly()
         {
-            var a = new StatValue<long>(StatId.AttackPower, 800, 1000L);
-            var b = new StatValue<long>(StatId.AttackPower, 500, 1000L);
-            Assert.Throws<ArgumentException>(() => { var _ = a + b; });
+            StatValue a = 1.5;
+            StatValue b = 2.5;
+            Assert.IsTrue(a < b);
+            Assert.IsTrue(b > a);
+            Assert.IsTrue(a <= a);
+            Assert.IsTrue(a >= a);
+            Assert.IsTrue(a != b);
+        }
+
+        [Test]
+        public void UnaryMinus_NegatesValue()
+        {
+            StatValue a = 5L;
+            Assert.AreEqual((StatValue)(-5L), -a);
+        }
+
+        [Test]
+        public void Divide_ByZero_Throws()
+        {
+            StatValue a = 10L;
+            StatValue zero = 0L;
+            Assert.Throws<DivideByZeroException>(() => { var _ = a / zero; });
+        }
+
+        [Test]
+        public void Multiply_Overflow_Throws()
+        {
+            StatValue huge = StatValue.FromRaw(long.MaxValue / 2);
+            Assert.Throws<OverflowException>(() => { var _ = huge * huge; });
+        }
+
+        [Test]
+        public void Add_Overflow_Throws()
+        {
+            StatValue huge = StatValue.FromRaw(long.MaxValue);
+            StatValue one = StatValue.FromRaw(1);
+            Assert.Throws<OverflowException>(() => { var _ = huge + one; });
+        }
+
+        [Test]
+        public void Arithmetic_ChainedOperators_DoNotAllocate()
+        {
+            StatValue a = 100L;
+            StatValue b = 200L;
+            StatValue c = 3L;
+
+            Assert.That(() =>
+            {
+                var r = a + b * c;
+            }, Is.Not.AllocatingGCMemory());
         }
     }
 }

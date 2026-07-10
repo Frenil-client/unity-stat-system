@@ -1,85 +1,65 @@
 using System;
+using System.Globalization;
 
 namespace StatSystem
 {
     /// <summary>
-    /// 제네릭 스탯 값 컨테이너.
-    /// int / long / float / double 등 다양한 수치 타입을 단일 클래스로 처리합니다.
+    /// 소수 4자리 고정소수점 값 타입.
+    /// long raw 값 하나로 표현되는 8바이트 값 타입이라 boxing 없이 연산되고,
+    /// 정수 산술만 사용하므로 float처럼 플랫폼/실행마다 결과가 흔들리지 않는다(결정적).
     ///
-    /// 핵심 설계:
-    /// - MaxValue 무결성 검사: Value가 MaxValue를 초과하면 자동 클램프
-    /// - decimal 정밀도 유지: 부동소수점 오차 방지를 위해 ValueDecimal 병행 보관
+    /// decimal도 값 타입이라 boxing은 없지만 16바이트 + 소프트웨어 연산이라 핫패스에는 과함.
+    /// double은 간단하지만 누적 오차 문제가 그대로 남는다.
+    /// 스탯 도메인(기본값 + 가산 + 퍼센트 증감)에는 소수 4자리 정밀도로 충분하다.
     /// </summary>
-    public partial class StatValue<T> where T : struct, IComparable<T>
+    public readonly partial struct StatValue : IEquatable<StatValue>, IComparable<StatValue>
     {
-        /// <summary>스탯 고유 ID (enum)</summary>
-        public StatId Id { get; private set; }
+        public const int Scale = 10000;
 
-        /// <summary>스탯 UID (uint). StatRegistry를 통해 이름으로 조회 가능</summary>
-        public uint StatUid => (uint)Id;
+        public static readonly StatValue Zero = default;
+        public static readonly StatValue One = FromInt(1);
+        public static readonly StatValue MaxValue = FromRaw(long.MaxValue);
+        public static readonly StatValue MinValue = FromRaw(long.MinValue);
 
-        private T _value;
-        private T _maxValue;
+        private readonly long raw;
 
-        /// <summary>부동소수점 오차 방지용 decimal 보관값</summary>
-        public decimal ValueDecimal { get; private set; }
+        private StatValue(long raw) => this.raw = raw;
 
-        /// <summary>
-        /// 스탯 값. MaxValue를 초과하면 자동으로 MaxValue로 클램프됩니다.
-        /// </summary>
-        public T Value
-        {
-            get => _value;
-            set
-            {
-                _value = _maxValue.CompareTo(value) < 0 ? _maxValue : value;
-                ValueDecimal = Convert.ToDecimal(_value);
-            }
-        }
+        /// <summary>내부 raw 값(1/Scale 단위)을 그대로 사용해 생성한다. 클램프 등 상한값 표현에 사용.</summary>
+        public static StatValue FromRaw(long raw) => new StatValue(raw);
+
+        public static StatValue FromInt(long value) => new StatValue(checked(value * Scale));
 
         /// <summary>
-        /// 스탯 최대값. 현재 Value보다 낮게 설정하면 예외를 던집니다.
+        /// 소수 4자리로 반올림해 저장한다 (0.5는 항상 먼 쪽으로: MidpointRounding.AwayFromZero).
         /// </summary>
-        public T MaxValue
-        {
-            get => _maxValue;
-            set
-            {
-                if (value.CompareTo(_value) < 0)
-                    throw new ArgumentException($"MaxValue({value})는 현재 Value({_value})보다 작을 수 없습니다.");
-                _maxValue = value;
-            }
-        }
+        public static StatValue FromFloat(double value) =>
+            new StatValue(checked((long)Math.Round(value * Scale, MidpointRounding.AwayFromZero)));
 
-        /// <summary>StatId와 초기값으로 생성. 최대값은 타입 기본 최대값으로 설정됩니다.</summary>
-        public StatValue(StatId id, T value)
-        {
-            Id        = id;
-            _maxValue = GetTypeMaxValue();
-            Value     = value;
-        }
+        public static StatValue FromFloat(float value) => FromFloat((double)value);
 
-        /// <summary>StatId, 초기값, 최대값으로 생성합니다.</summary>
-        public StatValue(StatId id, T value, T maxValue)
-        {
-            if (maxValue.CompareTo(value) < 0)
-                throw new ArgumentException($"MaxValue({maxValue})는 Value({value})보다 작을 수 없습니다.");
+        /// <summary>1/Scale 단위의 내부 원값. 디버깅/직렬화 용도.</summary>
+        public long Raw => raw;
 
-            Id        = id;
-            _maxValue = maxValue;
-            Value     = value;
-        }
+        public float ToFloat() => (float)raw / Scale;
 
-        private T GetTypeMaxValue()
-        {
-            var type = typeof(T);
-            if (type == typeof(int))    return (T)(object)int.MaxValue;
-            if (type == typeof(long))   return (T)(object)long.MaxValue;
-            if (type == typeof(uint))   return (T)(object)uint.MaxValue;
-            if (type == typeof(ulong))  return (T)(object)ulong.MaxValue;
-            if (type == typeof(float))  return (T)(object)float.MaxValue;
-            if (type == typeof(double)) return (T)(object)double.MaxValue;
-            throw new ArgumentException($"지원하지 않는 타입: {type}");
-        }
+        public double ToDouble() => (double)raw / Scale;
+
+        /// <summary>정수 변환은 버림(내림) 규칙을 따른다. 반올림이 필요하면 Round()를 사용할 것.</summary>
+        public long ToInt() => raw / Scale;
+
+        /// <summary>가장 가까운 정수로 반올림(0.5는 먼 쪽으로).</summary>
+        public long Round() => (long)Math.Round((double)raw / Scale, MidpointRounding.AwayFromZero);
+
+        public static implicit operator StatValue(long value) => FromInt(value);
+        public static implicit operator StatValue(double value) => FromFloat(value);
+
+        public bool Equals(StatValue other) => raw == other.raw;
+        public override bool Equals(object obj) => obj is StatValue other && Equals(other);
+        public override int GetHashCode() => raw.GetHashCode();
+        public int CompareTo(StatValue other) => raw.CompareTo(other.raw);
+
+        public override string ToString() =>
+            (raw / (decimal)Scale).ToString("0.####", CultureInfo.InvariantCulture);
     }
 }
