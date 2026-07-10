@@ -76,22 +76,16 @@ static Stat()
 }
 ```
 
-### 5. 박싱 제거 - StatValue 고정소수점 값 타입
+### 5. StatValue가 struct + long 고정소수점인 이유
 
-**문제**: 기존 `StatValue<T>` 연산자 오버로드가 `(T)(object)`로 피연산자를 매 호출마다 boxing했다. 스탯 연산은 전투/장비 갱신 시 고빈도로 호출되는 핫패스라 GC 압박의 직접 원인이었다. 게다가 `StatValue<T>` 자체가 class여서, boxing을 없애도 `+`/`-` 연산자가 `new StatValue<T>(...)`로 매번 힙 할당을 했다.
+스탯 연산(`+`, `-`, 퍼센트 적용)은 전투/장비 갱신 시 고빈도로 호출되는 핫패스라, 호출마다 boxing이나 힙 할당이 생기면 GC 압박으로 바로 이어진다. 그래서 `StatValue`는 object를 경유하지 않는 8바이트 값 타입(struct)으로 설계했고, 소수 4자리(Scale=10000) long 고정소수점으로 값을 표현한다.
 
-**원인**: float 오차 없는 정확한 수치 연산(decimal 계열)이 목표였는데, 제네릭 `T`(int/long/float/double)를 하나의 클래스로 처리하려다 보니 타입 분기마다 object 캐스트가 필요했다.
+- **struct + non-generic**: 값 타입이라 boxing이 없고, `+`/`-`가 항상 struct를 반환하므로 연산자 체인(`a + b * c`)에서도 heap 할당이 없다
+- **long 고정소수점 vs decimal vs double**: decimal도 boxing은 없지만 16바이트 + 소프트웨어 연산이라 핫패스엔 무겁고, double은 가볍지만 누적 오차(`0.1 + 0.2 != 0.3`)가 남는다. long 정수 연산은 8바이트로 가볍고 결과가 플랫폼/실행 간 결정적이며, 스탯 도메인(기본값 + 가산 + 퍼센트)엔 소수 4자리 정밀도로 충분하다
+- **오버플로**: 곱셈/나눗셈은 `raw * raw`가 long 범위를 넘을 수 있어 decimal을 중간값으로 쓰고, 범위를 벗어나면 조용히 자르는 대신 `OverflowException`을 던진다 (값이 잘리면 전투 수치 버그가 은폐될 위험이 크기 때문)
+- **컨테이너 분리**: StatId 보존과 MaxValue 클램프는 `StatValue`가 아니라 `StatSlot`(struct)의 역할이다. 산술 primitive와 컨테이너를 분리해 각각의 책임을 명확히 했다
 
-**해결**: `StatValue`를 long 기반 고정소수점(소수 4자리, Scale=10000) non-generic readonly struct로 재작성했다. 8바이트 값 타입 하나로 모든 스탯을 표현하므로 object 경유가 없고, 정수 연산이라 결과가 결정적이다. 컨테이너 역할(Id 보존, MaxValue 클램프)은 struct인 `StatSlot`이 이어받아 `+`/`-` 연산도 alloc-free를 유지한다. 곱셈/나눗셈은 `raw * raw`가 long 범위를 넘을 수 있어 decimal을 중간값으로 쓰고, 범위를 넘으면 조용히 자르지 않고 `OverflowException`을 던지도록 했다.
-
-**검증**: `0.1 + 0.2 == 0.3`이 정확히 성립하는 정밀도 테스트, 오버플로 예외 테스트, `Is.Not.AllocatingGCMemory()`로 `a + b * c` 체인 연산이 할당 없이 도는지 확인하는 GC 테스트를 추가했다 (`Tests/StatValueTests.cs`).
-
-### Breaking Changes
-
-- `StatValue<T>` (제네릭 class) 제거 -> `StatValue`(non-generic struct, 순수 산술) + `StatSlot`(struct, Id/MaxValue 컨테이너)로 분리
-- `StatValue<T>.ValueDecimal` 제거 - `StatValue` 자체가 소수 4자리까지 정확해 별도 decimal 보관이 불필요해짐
-- `Stat.GetLongStats()` / `Stat.GetDoubleStats()` -> `Stat.GetAllStats()`로 통합 (long/double 모두 `StatValue`로 표현되므로 CLR 타입별로 나눌 이유가 없어짐)
-- `long`/`double` 리터럴은 `StatValue`로 암시적 변환되므로 (`StatValue v = 100;`, `StatValue p = 0.3;`) 호출부 코드는 대체로 타입 이름만 `StatValue<long>`/`StatValue<double>` -> `StatSlot`으로 바꾸면 그대로 컴파일된다
+검증: `0.1 + 0.2 == 0.3` 정밀도 테스트, 오버플로 예외 테스트, `Is.Not.AllocatingGCMemory()`로 `a + b * c` 체인 연산이 할당 없이 도는지 확인하는 GC 테스트가 `Tests/StatValueTests.cs`에 있다.
 
 ## 파일 구성
 
