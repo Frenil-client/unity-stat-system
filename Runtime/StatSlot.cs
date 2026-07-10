@@ -4,9 +4,8 @@ namespace StatSystem
 {
     /// <summary>
     /// StatId + 값 + 최대값을 함께 관리하는 스탯 슬롯.
-    /// 이전 StatValue&lt;T&gt;의 컨테이너 역할(클램프, ID 보존)을 이어받았다.
-    /// 값 표현은 StatValue(고정소수점) 하나로 통일되어 int/long/float/double
-    /// 타입별 분기가 필요 없다.
+    /// 값 표현은 StatValue(고정소수점) 하나라 수치 타입별 분기가 없고,
+    /// MaxValue 초과 시 자동 클램프, MaxValue 역전 시 예외로 무결성을 지킨다.
     /// </summary>
     public struct StatSlot
     {
