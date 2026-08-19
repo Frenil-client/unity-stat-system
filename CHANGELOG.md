@@ -1,5 +1,17 @@
 # Changelog
 
+## .meta 파일 추가 (UPM git 설치 대응)
+
+git URL로 설치하면 패키지가 immutable 폴더(Library/PackageCache)에 놓이는데, Unity는 여기에
+.meta를 생성하지 못한다. 이 저장소에는 .meta가 하나도 없어서 모든 자산이 무시됐고
+(`has no meta file, but it's in an immutable folder. The asset will be ignored`),
+asmdef도 임포트되지 않아 `StatSystem` 어셈블리 자체가 만들어지지 않았다.
+드롭인(Assets/ 복사) 설치에서는 Unity가 meta를 생성해 주기 때문에 드러나지 않던 문제다.
+
+폴더와 자산 전체에 .meta를 추가했다. 코드 변경은 없다.
+
+---
+
 ## Stat 슬롯 저장소 재설계 (Reflection 제거 · 변경 통지 도입)
 
 ### 배경
