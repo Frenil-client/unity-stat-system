@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
 
 namespace StatSystem
 {
@@ -9,152 +7,179 @@ namespace StatSystem
     /// 캐릭터의 모든 스탯을 보관하고 관리하는 클래스.
     ///
     /// 구조:
-    /// - public 필드: 이름으로 직접 접근 (stat.AttackPower.Value += 100)
-    /// - Dictionary: StatId 기반 일괄 처리 (버프 합산, 전투력 계산 등)
-    /// - Reflection 캐싱: 초기화 비용을 static 생성자에서 한 번만 지불
+    /// - StatSlot[] 밀집 배열: 슬롯 실체는 여기 하나뿐이고, 모든 접근이 이 배열을 가리킨다
+    /// - StatId -> 인덱스 룩업 테이블: 일괄 처리(버프 합산, 전투력 계산)를 배열 인덱싱으로 처리
+    /// - 명명 접근자: ref readonly 프로퍼티라 복사 없이 읽히고, 쓰기는 컴파일 단계에서 막힌다
+    ///
+    /// 쓰기 경로는 SetValue / AddValue 하나로 좁혀져 있다. 슬롯을 직접 대입할 수 있으면
+    /// MaxValue 클램프와 Changed 통지를 조용히 건너뛸 수 있어서, 값 타입 접근자를
+    /// 읽기 전용으로 노출해 타입 수준에서 차단했다.
     /// </summary>
     public partial class Stat
     {
-        //공격력 / 마력
-        public StatSlot AttackPower;
-        public StatSlot MagicAttack;
-        public StatSlot AttackPowerPercent;
-        public StatSlot MagicAttackPercent;
-        public StatSlot Defense;
-        public StatSlot DefensePercent;
-
-        //데미지 / 크리티컬
-        public StatSlot Damage;            // 일반 데미지 %
-        public StatSlot FinalDamage;       // 최종 데미지 %
-        public StatSlot CriticalRate;      // 크리티컬 확률 %
-        public StatSlot CriticalDamage;    // 크리티컬 데미지 %
-
-        //방어 / 생존
-        public StatSlot StatusResistance;
-
-        //보스 / 방어율 무시
-        public StatSlot BossDamage;            // 보스 데미지 %
-        public StatSlot IgnoreDefense;         // 방어율 무시 %
-        public StatSlot NormalMonsterDamage;   // 일반 몬스터 데미지 %
-        public StatSlot IgnoreElemental;       // 속성 내성 무시 %
-
-        //이동 / 기타
-        public StatSlot MoveSpeed;
-        public StatSlot JumpPower;
-        public StatSlot AttackSpeed;       // 공격 속도 단계 (1~8)
-
-        //StatId -> FieldInfo 매핑 (일괄 처리용). 값의 복사본이 아니라 필드 위치를 캐싱하므로
-        //stat.AttackPower.Value = x 같은 직접 수정에도 항상 최신 값을 반영한다.
-        private readonly Dictionary<StatId, FieldInfo> _statFields = new();
-
-        //Reflection 필드 캐싱 (static - 한 번만 초기화)
-        private static readonly Dictionary<string, FieldInfo> _fieldCache;
+        //StatId -> 인덱스 룩업. Dictionary<StatId, T>를 쓰지 않는 이유는,
+        //Unity의 Mono/IL2CPP에서 enum 키의 EqualityComparer<T>.Default가
+        //boxing 경로로 떨어지는 경우가 있어 조회마다 힙 할당이 생기기 때문이다.
+        //StatId는 값이 희소하지만 상한이 작아(현재 502) 평면 배열로 충분하다.
+        private static readonly StatId[] _ids;
+        private static readonly int[] _idToIndex;
+        private static readonly uint _maxRawId;
 
         static Stat()
         {
-            _fieldCache = typeof(Stat)
-                .GetFields(BindingFlags.Public | BindingFlags.Instance)
-                .Where(f => f.FieldType == typeof(StatSlot))
-                .ToDictionary(f => f.Name, f => f);
+            _ids = (StatId[])Enum.GetValues(typeof(StatId));
+
+            uint max = 0;
+            foreach (var id in _ids)
+            {
+                if ((uint)id > max) max = (uint)id;
+            }
+            _maxRawId = max;
+
+            _idToIndex = new int[max + 1];
+            for (int i = 0; i < _idToIndex.Length; i++)
+                _idToIndex[i] = -1;
+
+            for (int i = 0; i < _ids.Length; i++)
+                _idToIndex[(uint)_ids[i]] = i;
         }
 
-        /// <summary>기본 생성자. 모든 스탯을 0으로 초기화합니다.</summary>
-        public Stat() => Init();
-
-        /// <summary>복사 생성자.</summary>
-        public Stat(Stat source)
-        {
-            Init();
-            foreach (var kv in _statFields)
-                kv.Value.SetValue(this, kv.Value.GetValue(source));
-        }
-
-        private void Init()
-        {
-            AttackPower        = new StatSlot(StatId.AttackPower,        0L);
-            MagicAttack        = new StatSlot(StatId.MagicAttack,        0L);
-            AttackPowerPercent = new StatSlot(StatId.AttackPowerPercent, 0.0);
-            MagicAttackPercent = new StatSlot(StatId.MagicAttackPercent, 0.0);
-            Defense            = new StatSlot(StatId.Defense,            0L);
-            DefensePercent     = new StatSlot(StatId.DefensePercent,     0.0);
-
-            Damage         = new StatSlot(StatId.Damage,         0.0);
-            FinalDamage    = new StatSlot(StatId.FinalDamage,    0.0);
-            CriticalRate   = new StatSlot(StatId.CriticalRate,   0.0);
-            CriticalDamage = new StatSlot(StatId.CriticalDamage, 0.0);
-
-            StatusResistance = new StatSlot(StatId.StatusResistance, 0L);
-
-            BossDamage          = new StatSlot(StatId.BossDamage,          0.0);
-            IgnoreDefense       = new StatSlot(StatId.IgnoreDefense,       0.0);
-            NormalMonsterDamage = new StatSlot(StatId.NormalMonsterDamage, 0.0);
-            IgnoreElemental     = new StatSlot(StatId.IgnoreElemental,     0.0);
-
-            MoveSpeed   = new StatSlot(StatId.MoveSpeed,   0L);
-            JumpPower   = new StatSlot(StatId.JumpPower,   0L);
-            AttackSpeed = new StatSlot(StatId.AttackSpeed, 0L);
-
-            BuildFieldIndex();
-        }
+        private readonly StatSlot[] _slots;
 
         /// <summary>
-        /// Reflection 캐시로 StatId -> FieldInfo Dictionary를 구성합니다.
-        /// UID 기반 일괄 처리(버프 합산, 전투력 계산 등)에 사용됩니다.
+        /// 스탯 값이 실제로 바뀔 때 (StatId, 클램프까지 반영된 최종 값)으로 발행된다.
+        /// 같은 값을 다시 대입하면 발행되지 않는다.
+        /// 복사 생성자는 구독자를 복사하지 않는다 - 구독은 인스턴스마다 독립이다.
         /// </summary>
-        private void BuildFieldIndex()
+        public event Action<StatId, StatValue> Changed;
+
+        /// <summary>등록된 모든 슬롯. 순서는 StatId 선언 순서와 같다.</summary>
+        public IReadOnlyList<StatSlot> Slots => _slots;
+
+        /// <summary>기본 생성자. 모든 스탯을 0으로 초기화합니다.</summary>
+        public Stat()
         {
-            _statFields.Clear();
-            foreach (var fi in _fieldCache.Values)
-            {
-                var slot = (StatSlot)fi.GetValue(this);
-                _statFields[slot.Id] = fi;
-            }
+            _slots = new StatSlot[_ids.Length];
+            for (int i = 0; i < _ids.Length; i++)
+                _slots[i] = new StatSlot(_ids[i], StatValue.Zero);
+        }
+
+        /// <summary>복사 생성자. 값만 복사하며 Changed 구독자는 복사하지 않습니다.</summary>
+        public Stat(Stat source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            _slots = new StatSlot[_ids.Length];
+            Array.Copy(source._slots, _slots, _slots.Length);
         }
 
         //StatId 기반 접근 API
 
-        public double GetValue(StatId id)
+        /// <summary>미등록 StatId면 StatValue.Zero를 반환합니다.</summary>
+        public StatValue GetValue(StatId id)
         {
-            if (!_statFields.TryGetValue(id, out var fi)) return 0;
-            return ((StatSlot)fi.GetValue(this)).Value.ToDouble();
+            int index = IndexOf(id);
+            return index < 0 ? StatValue.Zero : _slots[index].Value;
         }
 
-        public bool SetValue(StatId id, double value)
+        /// <summary>
+        /// 값을 대입합니다. MaxValue를 넘으면 슬롯이 클램프하며,
+        /// 클램프 후 값이 실제로 바뀐 경우에만 Changed가 발행됩니다.
+        /// </summary>
+        /// <returns>등록된 StatId면 true, 미등록이면 false.</returns>
+        public bool SetValue(StatId id, StatValue value)
         {
-            if (!_statFields.TryGetValue(id, out var fi)) return false;
-            var slot = (StatSlot)fi.GetValue(this);
-            slot.Value = StatValue.FromFloat(value);
-            fi.SetValue(this, slot);
+            int index = IndexOf(id);
+            if (index < 0) return false;
+
+            StatValue before = _slots[index].Value;
+            _slots[index].Value = value;
+            NotifyIfChanged(id, index, before);
             return true;
         }
 
-        public bool AddValue(StatId id, double value)
+        /// <summary>
+        /// 현재 값에 delta를 더합니다. 음수를 넘기면 차감입니다.
+        /// </summary>
+        /// <returns>등록된 StatId면 true, 미등록이면 false.</returns>
+        public bool AddValue(StatId id, StatValue delta)
         {
-            if (!_statFields.TryGetValue(id, out var fi)) return false;
-            var slot = (StatSlot)fi.GetValue(this);
-            slot.Value = slot.Value + StatValue.FromFloat(value);
-            fi.SetValue(this, slot);
+            int index = IndexOf(id);
+            if (index < 0) return false;
+
+            StatValue before = _slots[index].Value;
+            _slots[index].Value = before + delta;
+            NotifyIfChanged(id, index, before);
             return true;
         }
 
-        /// <summary>등록된 모든 StatId -> StatSlot 스냅샷.</summary>
-        public Dictionary<StatId, StatSlot> GetAllStats()
+        /// <summary>
+        /// 스탯의 상한을 설정합니다. 현재 값보다 낮은 상한은 슬롯이 예외로 거부합니다.
+        /// </summary>
+        /// <returns>등록된 StatId면 true, 미등록이면 false.</returns>
+        public bool SetMaxValue(StatId id, StatValue maxValue)
         {
-            var result = new Dictionary<StatId, StatSlot>();
-            foreach (var kv in _statFields)
-                result[kv.Key] = (StatSlot)kv.Value.GetValue(this);
-            return result;
+            int index = IndexOf(id);
+            if (index < 0) return false;
+
+            _slots[index].MaxValue = maxValue;
+            return true;
         }
 
+        /// <summary>모든 슬롯의 값이 같은지 비교합니다. MaxValue는 비교 대상이 아닙니다.</summary>
         public bool IsEqual(Stat other)
         {
-            foreach (var kv in _statFields)
+            if (other == null) return false;
+
+            for (int i = 0; i < _slots.Length; i++)
             {
-                var mine   = (StatSlot)kv.Value.GetValue(this);
-                var theirs = (StatSlot)kv.Value.GetValue(other);
-                if (mine.Value != theirs.Value) return false;
+                if (_slots[i].Value != other._slots[i].Value) return false;
             }
             return true;
+        }
+
+        //이름으로 직접 접근 (읽기 전용 - 쓰기는 SetValue / AddValue 사용)
+
+        public ref readonly StatSlot AttackPower        => ref Slot(StatId.AttackPower);
+        public ref readonly StatSlot MagicAttack        => ref Slot(StatId.MagicAttack);
+        public ref readonly StatSlot AttackPowerPercent => ref Slot(StatId.AttackPowerPercent);
+        public ref readonly StatSlot MagicAttackPercent => ref Slot(StatId.MagicAttackPercent);
+        public ref readonly StatSlot Defense            => ref Slot(StatId.Defense);
+        public ref readonly StatSlot DefensePercent     => ref Slot(StatId.DefensePercent);
+
+        public ref readonly StatSlot Damage         => ref Slot(StatId.Damage);
+        public ref readonly StatSlot FinalDamage    => ref Slot(StatId.FinalDamage);
+        public ref readonly StatSlot CriticalRate   => ref Slot(StatId.CriticalRate);
+        public ref readonly StatSlot CriticalDamage => ref Slot(StatId.CriticalDamage);
+
+        public ref readonly StatSlot StatusResistance => ref Slot(StatId.StatusResistance);
+
+        public ref readonly StatSlot BossDamage          => ref Slot(StatId.BossDamage);
+        public ref readonly StatSlot IgnoreDefense       => ref Slot(StatId.IgnoreDefense);
+        public ref readonly StatSlot NormalMonsterDamage => ref Slot(StatId.NormalMonsterDamage);
+        public ref readonly StatSlot IgnoreElemental     => ref Slot(StatId.IgnoreElemental);
+
+        public ref readonly StatSlot MoveSpeed   => ref Slot(StatId.MoveSpeed);
+        public ref readonly StatSlot JumpPower   => ref Slot(StatId.JumpPower);
+        public ref readonly StatSlot AttackSpeed => ref Slot(StatId.AttackSpeed);
+
+        //내부 구현
+
+        //명명 접근자 전용 경로. StatId가 enum에 정의된 값임이 보장되므로 -1 검사가 없다.
+        private ref StatSlot Slot(StatId id) => ref _slots[_idToIndex[(uint)id]];
+
+        private static int IndexOf(StatId id)
+        {
+            uint raw = (uint)id;
+            return raw <= _maxRawId ? _idToIndex[raw] : -1;
+        }
+
+        private void NotifyIfChanged(StatId id, int index, StatValue before)
+        {
+            //클램프 때문에 대입한 값과 저장된 값이 다를 수 있어 슬롯에서 다시 읽는다.
+            StatValue after = _slots[index].Value;
+            if (after != before)
+                Changed?.Invoke(id, after);
         }
     }
 }

@@ -1,0 +1,29 @@
+### C#
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio cache/options directory
+.vs/
+
+# User-specific files
+*.suo
+*.user
+
+# Debug symbols
+*.pdb
+
+# .NET build artifacts
+artifacts/
+
+### Unity
+# CI에서 임시로 만드는 테스트 프로젝트
+[Ll]ibrary/
+[Tt]emp/
+[Ll]ogs/
+
+### Windows
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk

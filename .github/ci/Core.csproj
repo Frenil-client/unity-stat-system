@@ -1,0 +1,27 @@
+<!--
+  CI 전용 프로젝트. Unity 없이 Runtime 소스를 컴파일한다.
+
+  목적이 두 가지다.
+  1. Unity 라이선스 없이도 매 푸시마다 컴파일 회귀를 잡는다.
+  2. "이 패키지의 Runtime은 순수 C#이며 Unity에 의존하지 않는다"는 README의 주장을
+     빌드로 강제한다. Runtime에 UnityEngine 참조가 들어오는 순간 이 빌드가 깨진다.
+     (같은 제약을 에디터 쪽에서는 asmdef의 noEngineReferences: true 가 담당한다)
+
+  Unity가 실제로 쓰는 조합에 맞춰 netstandard2.1 / C# 9 로 고정한다.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>StatSystem</AssemblyName>
+    <RootNamespace>StatSystem</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../Runtime/**/*.cs" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # game-ci 에디터 이미지에 존재하는 버전이어야 한다.
+  # 사용 가능한 목록: https://game.ci/docs/docker/versions
+  UNITY_VERSION: 2021.3.45f1
+  PACKAGE_NAME: com.frenil.stat-system
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Unity 라이선스 없이 매 푸시마다 도는 검증.
+  # Runtime이 순수 C#이라는 전제가 깨지면 (UnityEngine 참조가 들어오면) 여기서 실패한다.
+  core-build:
+    name: Core 빌드 (Unity 비의존 검증)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: netstandard2.1 / C# 9 로 컴파일
+        run: dotnet build .github/ci/Core.csproj -c Release --nologo -warnaserror
+
+  # Unity EditMode 테스트. 라이선스 시크릿이 등록된 저장소에서만 실행된다.
+  # (포크 PR에서 빨간 X가 뜨는 것을 막기 위해 게이트를 둔다)
+  license-gate:
+    name: 라이선스 시크릿 확인
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.probe.outputs.available }}
+    steps:
+      - id: probe
+        run: echo "available=${{ secrets.UNITY_LICENSE != '' }}" >> "$GITHUB_OUTPUT"
+
+  editmode-tests:
+    name: Unity EditMode 테스트
+    needs: license-gate
+    if: needs.license-gate.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: package
+
+      # 패키지 저장소에는 Unity 프로젝트가 없으므로, 이 패키지만 참조하는
+      # 최소 프로젝트를 만들어 그 안에서 테스트를 돌린다.
+      # testables 에 패키지를 넣어야 로컬 패키지의 Tests/ 가 Test Runner에 잡힌다.
+      - name: 최소 테스트 프로젝트 구성
+        run: |
+          mkdir -p TestProject/Assets TestProject/Packages TestProject/ProjectSettings
+          echo "m_EditorVersion: ${UNITY_VERSION}" > TestProject/ProjectSettings/ProjectVersion.txt
+          cat > TestProject/Packages/manifest.json <<JSON
+          {
+            "dependencies": {
+              "${PACKAGE_NAME}": "file:../../package",
+              "com.unity.test-framework": "1.1.33"
+            },
+            "testables": [
+              "${PACKAGE_NAME}"
+            ]
+          }
+          JSON
+          cat TestProject/Packages/manifest.json
+
+      - uses: actions/cache@v4
+        with:
+          path: TestProject/Library
+          key: Library-${{ env.UNITY_VERSION }}-${{ hashFiles('package/Runtime/**', 'package/Tests/**') }}
+          restore-keys: |
+            Library-${{ env.UNITY_VERSION }}-
+
+      - uses: game-ci/unity-test-runner@v4
+        id: tests
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: TestProject
+          unityVersion: ${{ env.UNITY_VERSION }}
+          testMode: editmode
+          artifactsPath: test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          checkName: EditMode 테스트 결과
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results
