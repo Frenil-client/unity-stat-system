@@ -81,4 +81,4 @@ asmdef도 임포트되지 않아 `StatSystem` 어셈블리 자체가 만들어�
 
 ### 검증
 
-`0.1 + 0.2 == 0.3` 정밀도 테스트, 오버플로 예외 테스트, `Is.Not.AllocatingGCMemory()` GC 할당 테스트를 `Tests/StatValueTests.cs`에 추가했다. 조사 과정과 설계 결정 근거는 [REFACTOR_SPEC.md](REFACTOR_SPEC.md)에 기록되어 있다.
+`0.1 + 0.2 == 0.3` 정밀도 테스트, 오버플로 예외 테스트, `Is.Not.AllocatingGCMemory()` GC 할당 테스트를 `Tests/StatValueTests.cs`에 추가했다.
