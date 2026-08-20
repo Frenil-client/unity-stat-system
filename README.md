@@ -86,6 +86,22 @@ SetValue + AddValue + GetValue + 명명 접근  ×  10만 회 (총 40만 연산)
   이후 (배열 인덱싱)      0 B
 ```
 
+이 수치는 `Benchmarks~/`에 들어 있는 코드가 만든 것이고, 누구나 다시 잴 수 있습니다.
+
+```bash
+dotnet run --project "Benchmarks~/StatAllocation.csproj" -c Release
+```
+
+벤치마크는 리팩토링 직전 구현(`LegacyReflectionStat`, 커밋 `b220d2e^`의 `Runtime/Stat.cs`를
+그대로 가져온 것)과 현재 구현을 나란히 돌려 비교합니다. 과거 수치를 문서에 박아두는 대신
+매번 다시 재므로 표가 낡지 않습니다.
+
+**측정 조건**: .NET 8 / Release / `GC.GetAllocatedBytesForCurrentThread()` / 경로당 1,000회 워밍업 후 측정.
+**Unity 런타임이 아니라 .NET 8에서 잰 값**이라 Mono·IL2CPP에서는 절대값이 다를 수 있습니다.
+다만 여기서 보는 것은 최적화 결과가 아니라 boxing의 유무이고, 그건 런타임이 바뀌어도 방향이 같습니다.
+Unity 환경에서의 검증은 `Tests/StatTests.cs`의 `Is.Not.AllocatingGCMemory()` 테스트가 맡습니다.
+자세한 내용은 [`Benchmarks~/README.md`](Benchmarks~/README.md)에 있습니다.
+
 그래서 슬롯 실체를 `StatSlot[]` 밀집 배열 하나로 모으고, `StatId`(희소 uint, 현재 상한 502)에서
 배열 인덱스를 얻는 평면 룩업 테이블을 정적 생성자에서 만든다. `Dictionary<StatId, ...>`를 쓰지 않은 건
 Unity의 Mono/IL2CPP에서 enum 키의 `EqualityComparer<T>.Default`가 boxing 경로로 떨어지는 경우가 있어서다.
@@ -155,6 +171,10 @@ Runtime/
 ├─ StatValue.Operators.cs  +, -, *, /, 비교 연산자, ApplyPercent
 ├─ StatSlot.cs             StatId + Value + MaxValue 컨테이너 (struct)
 └─ Stat.cs                 캐릭터 스탯 집합체
+Benchmarks~/
+├─ StatAllocation.csproj   할당 벤치마크 (CI가 매 푸시마다 실행)
+├─ LegacyReflectionStat.cs 리팩토링 직전 구현 - 비교 기준선
+└─ Program.cs
 Samples~/StatExample/
 └─ StatExample.cs          Unity MonoBehaviour 사용 예시
 ```
@@ -195,7 +215,7 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 
 | Job | 하는 일 | Unity 라이선스 |
 |---|---|---|
-| `core-build` | Runtime을 netstandard2.1 / C# 9 로 컴파일 | 불필요 |
+| `core-build` | Runtime 컴파일 + 할당 벤치마크 (0 B 아니면 실패) | 불필요 |
 | `editmode-tests` | game-ci로 EditMode 테스트 45종 실행 | 필요 |
 
 `core-build`는 컴파일 회귀를 잡는 동시에 "Runtime은 순수 C#이며 Unity에 의존하지 않는다"는
@@ -207,6 +227,18 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 manifest의 `testables`에 등록). 라이선스 시크릿(`UNITY_LICENSE`, `UNITY_EMAIL`,
 `UNITY_PASSWORD`)이 없는 저장소에서는 이 job을 건너뛴다 — 포크 PR에서 라이선스가 없다는
 이유로 빨간 X가 뜨는 것을 막기 위한 게이트다.
+
+## 스레딩
+
+**메인 스레드 전용입니다.** 값 변경과 통지는 호출한 스레드에서 그대로 동기 실행되며,
+내부에 락이나 스레드 마샬링이 없습니다. 백그라운드 스레드(네트워크 응답 콜백, `Task`
+연속 실행 등)에서 값을 바꾸면 구독자도 그 스레드에서 깨어나고, 구독자가 Unity API를
+건드리는 순간 예외가 납니다.
+
+서버 응답처럼 다른 스레드에서 값이 들어오는 경우에는 **호출하는 쪽이 메인 스레드로
+넘긴 뒤** 값을 설정해야 합니다. 이 제약을 라이브러리 안으로 들이지 않은 이유는,
+마샬링 방식(코루틴 / `SynchronizationContext` / 자체 디스패처)이 프로젝트마다 다르고
+그 선택을 패키지가 강제하면 오히려 걸림돌이 되기 때문입니다.
 
 ## 요구 사항
 

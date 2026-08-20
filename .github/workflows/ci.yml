@@ -32,6 +32,10 @@ jobs:
       - name: netstandard2.1 / C# 9 로 컴파일
         run: dotnet build .github/ci/Core.csproj -c Release --nologo -warnaserror
 
+      # 할당이 되살아나면 여기서 실패한다. 수치를 문서에만 적어두면 낡지만, 이건 낡지 않는다.
+      - name: 할당 벤치마크 (0 바이트 회귀 방지)
+        run: dotnet run --project "Benchmarks~/StatAllocation.csproj" -c Release --nologo
+
   # Unity EditMode 테스트. 라이선스 시크릿이 등록된 저장소에서만 실행된다.
   # (포크 PR에서 빨간 X가 뜨는 것을 막기 위해 게이트를 둔다)
   license-gate:
