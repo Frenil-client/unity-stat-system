@@ -1,7 +1,5 @@
 using System;
 using NUnit.Framework;
-using UnityEngine.TestTools.Constraints;
-using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace StatSystem.Tests
 {
@@ -102,19 +100,6 @@ namespace StatSystem.Tests
             StatValue huge = StatValue.FromRaw(long.MaxValue);
             StatValue one = StatValue.FromRaw(1);
             Assert.Throws<OverflowException>(() => { var _ = huge + one; });
-        }
-
-        [Test]
-        public void Arithmetic_ChainedOperators_DoNotAllocate()
-        {
-            StatValue a = 100L;
-            StatValue b = 200L;
-            StatValue c = 3L;
-
-            Assert.That(() =>
-            {
-                var r = a + b * c;
-            }, Is.Not.AllocatingGCMemory());
         }
     }
 }

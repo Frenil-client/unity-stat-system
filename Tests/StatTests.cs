@@ -1,7 +1,5 @@
 using System;
 using NUnit.Framework;
-using UnityEngine.TestTools.Constraints;
-using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace StatSystem.Tests
 {
@@ -167,56 +165,6 @@ namespace StatSystem.Tests
             copy.SetBaseValue(StatId.AttackPower, 123L);
 
             Assert.AreEqual(0, fireCount);
-        }
-
-        //할당 검증 - 이 두 테스트가 Reflection(FieldInfo) 기반 구현에서는 실패했다.
-        //FieldInfo.GetValue/SetValue가 struct인 StatSlot을 object로 boxing하기 때문이다.
-
-        [Test]
-        public void BulkAccess_DoesNotAllocate()
-        {
-            var stat = new Stat();
-            StatValue sink = default;
-
-            Assert.That(() =>
-            {
-                stat.SetBaseValue(StatId.AttackPower, 500L);
-                stat.AddBaseValue(StatId.AttackPower, 100L);
-                sink = stat.GetValue(StatId.AttackPower);
-            }, Is.Not.AllocatingGCMemory());
-
-            Assert.AreEqual((StatValue)600L, sink);
-        }
-
-        [Test]
-        public void NamedAccessorRead_DoesNotAllocate()
-        {
-            var stat = new Stat();
-            stat.SetBaseValue(StatId.AttackPower, 500L);
-            StatValue sink = default;
-
-            Assert.That(() =>
-            {
-                sink = stat.AttackPower;
-            }, Is.Not.AllocatingGCMemory());
-
-            Assert.AreEqual((StatValue)500L, sink);
-        }
-
-        [Test]
-        public void ChangedNotification_DoesNotAllocate()
-        {
-            var stat = new Stat();
-            StatValue observed = default;
-            stat.Changed += (_, value) => observed = value;
-
-            long next = 1;
-            Assert.That(() =>
-            {
-                stat.SetBaseValue(StatId.AttackPower, next++);
-            }, Is.Not.AllocatingGCMemory());
-
-            Assert.AreNotEqual(StatValue.Zero, observed);
         }
 
         //StatRegistry.AllIds 순서가 곧 BaseSlots 인덱스라는 전제를 테스트에서 재현한다.

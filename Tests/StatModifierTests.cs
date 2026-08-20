@@ -1,6 +1,4 @@
 using NUnit.Framework;
-using UnityEngine.TestTools.Constraints;
-using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace StatSystem.Tests
 {
@@ -240,43 +238,6 @@ namespace StatSystem.Tests
             copy.ClearModifiers();
 
             Assert.AreEqual((StatValue)150L, source.AttackPower, "원본은 영향받지 않아야 한다");
-        }
-
-        //할당
-
-        // 최종값은 쓰기 시점에 계산해 캐시에 넣으므로, 읽기는 배열 인덱싱 한 번이다.
-        [Test]
-        public void ReadingFinalValue_DoesNotAllocate()
-        {
-            var stat = new Stat();
-            stat.SetBaseValue(StatId.AttackPower, 100L);
-            stat.AddModifier(StatId.AttackPower, StatModifierType.Flat, 50L);
-            stat.AddModifier(StatId.AttackPower, StatModifierType.PercentAdd, 0.30);
-            StatValue sink = default;
-
-            Assert.That(() =>
-            {
-                sink = stat.GetValue(StatId.AttackPower);
-                sink = stat.AttackPower;
-            }, Is.Not.AllocatingGCMemory());
-
-            Assert.AreEqual((StatValue)195L, sink);
-        }
-
-        // 재계산은 모디파이어 목록을 훑지만 struct 열거자를 쓰므로 할당이 없다.
-        [Test]
-        public void RecomputingWithModifiers_DoesNotAllocate()
-        {
-            var stat = new Stat();
-            stat.AddModifier(StatId.AttackPower, StatModifierType.Flat, 50L);
-            stat.AddModifier(StatId.AttackPower, StatModifierType.PercentAdd, 0.30);
-            stat.AddModifier(StatId.AttackPower, StatModifierType.PercentMultiply, 0.10);
-
-            long next = 1;
-            Assert.That(() =>
-            {
-                stat.SetBaseValue(StatId.AttackPower, next++);
-            }, Is.Not.AllocatingGCMemory());
         }
     }
 }

@@ -285,22 +285,32 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 
 ## CI
 
-`.github/workflows/ci.yml` 이 두 단계로 돌아간다.
+`.github/workflows/ci.yml`이 매 푸시마다 세 가지를 검증합니다. **Unity 라이선스가 필요 없습니다.**
 
-| Job | 하는 일 | Unity 라이선스 |
-|---|---|---|
-| `core-build` | Runtime 컴파일 + 할당 벤치마크 (0 B 아니면 실패) | 불필요 |
-| `editmode-tests` | game-ci로 EditMode 테스트 63종 실행 | 필요 |
+| 단계 | 하는 일 |
+|---|---|
+| Core 빌드 | Runtime을 netstandard2.1 / C# 9로 컴파일 |
+| 헤드리스 테스트 | 63종 중 **57종** 실행 |
+| 할당 벤치마크 | 40만 연산 기준 0바이트 아니면 실패 |
 
-`core-build`는 컴파일 회귀를 잡는 동시에 "Runtime은 순수 C#이며 Unity에 의존하지 않는다"는
-위의 주장을 빌드로 강제한다. Runtime에 UnityEngine 참조가 들어오는 순간 이 job이 깨진다
-(에디터 쪽에서는 asmdef의 `noEngineReferences: true`가 같은 제약을 담당한다).
+**Core 빌드**는 컴파일 회귀를 잡는 동시에 "Runtime은 순수 C#이며 Unity에 의존하지 않는다"는
+위의 주장을 빌드로 강제합니다. UnityEngine 참조가 들어오는 순간 깨집니다
+(에디터 쪽에서는 asmdef의 `noEngineReferences: true`가 같은 제약을 담당합니다).
 
-`editmode-tests`는 패키지 저장소에 Unity 프로젝트가 없으므로, 이 패키지만 참조하는 최소
-프로젝트를 워크플로에서 만들어 그 안에서 테스트를 돌린다(로컬 패키지의 `Tests/`가 잡히도록
-manifest의 `testables`에 등록). 라이선스 시크릿(`UNITY_LICENSE`, `UNITY_EMAIL`,
-`UNITY_PASSWORD`)이 없는 저장소에서는 이 job을 건너뛴다 — 포크 PR에서 라이선스가 없다는
-이유로 빨간 X가 뜨는 것을 막기 위한 게이트다.
+**헤드리스 테스트**는 `Tests~/`의 dotnet 프로젝트가 `Tests/`의 소스를 **그대로 컴파일**해 돌립니다.
+사본이 아니라 같은 파일이므로 Unity Test Runner에서 도는 것과 정확히 같은 테스트입니다.
+빠지는 6종은 `Is.Not.AllocatingGCMemory()`를 쓰는 `StatAllocationTests.cs`뿐이고,
+그 성질은 할당 벤치마크가 수치까지 비교해 대신 검증합니다.
+
+### 왜 Unity EditMode 테스트를 CI에서 돌리지 않는가
+
+game-ci로 시도했지만 Unity Personal 라이선스는 `.ulf` 안에 MAC 주소와 머신 ID가 박힌
+**하드웨어 바인딩** 방식이라, 실행마다 새로 만들어지는 GitHub 러너에서는 활성화되지 않습니다.
+자체 호스팅 러너를 쓰면 라이선스는 맞지만 공개 저장소에서는 포크 PR이 임의 코드를 실행할 수
+있어 선택지가 아닙니다.
+
+그래서 "CI에서 Unity를 돌린다"를 포기하는 대신 **테스트를 Unity 없이 돌 수 있게** 만들었습니다.
+초록 뱃지가 실제로 컴파일·테스트 57종·할당 회귀를 증명하며, 남은 6종은 로컬 Test Runner의 몫입니다.
 
 ## 스레딩
 
