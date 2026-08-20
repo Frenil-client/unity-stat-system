@@ -8,47 +8,47 @@ namespace StatSystem.Tests
     public class StatTests
     {
         [Test]
-        public void SetValue_ThenGetValue_Roundtrips()
+        public void SetBaseValue_ThenGetValue_Roundtrips()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 500L);
+            stat.SetBaseValue(StatId.AttackPower, 500L);
             Assert.AreEqual((StatValue)500L, stat.GetValue(StatId.AttackPower));
         }
 
         [Test]
-        public void AddValue_Accumulates()
+        public void AddBaseValue_Accumulates()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.Defense, 100L);
-            stat.AddValue(StatId.Defense, 50L);
+            stat.SetBaseValue(StatId.Defense, 100L);
+            stat.AddBaseValue(StatId.Defense, 50L);
             Assert.AreEqual((StatValue)150L, stat.GetValue(StatId.Defense));
         }
 
         [Test]
-        public void AddValue_NegativeDelta_Subtracts()
+        public void AddBaseValue_NegativeDelta_Subtracts()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.Defense, 100L);
-            stat.AddValue(StatId.Defense, -30L);
+            stat.SetBaseValue(StatId.Defense, 100L);
+            stat.AddBaseValue(StatId.Defense, -30L);
             Assert.AreEqual((StatValue)70L, stat.GetValue(StatId.Defense));
         }
 
-        // 명명 접근자와 StatId 접근이 같은 슬롯을 가리키는지 검증.
+        // 명명 접근자는 최종값을 돌려준다. 모디파이어가 없으면 기본값과 같다.
         [Test]
-        public void NamedAccessor_ReflectsSetValue()
+        public void NamedAccessor_ReturnsFinalValue()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 777L);
-            Assert.AreEqual((StatValue)777L, stat.AttackPower.Value);
-            Assert.AreEqual(StatId.AttackPower, stat.AttackPower.Id);
+            stat.SetBaseValue(StatId.AttackPower, 777L);
+            Assert.AreEqual((StatValue)777L, stat.AttackPower);
+            Assert.AreEqual((StatValue)777L, stat.GetBaseValue(StatId.AttackPower));
         }
 
         [Test]
         public void CopyConstructor_ProducesEqualStat()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 300L);
-            stat.SetValue(StatId.CriticalRate, 25.5);
+            stat.SetBaseValue(StatId.AttackPower, 300L);
+            stat.SetBaseValue(StatId.CriticalRate, 25.5);
 
             var copy = new Stat(stat);
 
@@ -59,10 +59,10 @@ namespace StatSystem.Tests
         public void CopyConstructor_ProducesIndependentInstance()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 300L);
+            stat.SetBaseValue(StatId.AttackPower, 300L);
 
             var copy = new Stat(stat);
-            copy.SetValue(StatId.AttackPower, 1L);
+            copy.SetBaseValue(StatId.AttackPower, 1L);
 
             Assert.AreEqual((StatValue)300L, stat.GetValue(StatId.AttackPower));
             Assert.IsFalse(stat.IsEqual(copy));
@@ -82,21 +82,21 @@ namespace StatSystem.Tests
         }
 
         [Test]
-        public void SetValue_UnregisteredId_ReturnsFalse()
+        public void SetBaseValue_UnregisteredId_ReturnsFalse()
         {
             var stat = new Stat();
-            Assert.IsFalse(stat.SetValue((StatId)99999, 10L));
-            Assert.IsTrue(stat.SetValue(StatId.AttackPower, 10L));
+            Assert.IsFalse(stat.SetBaseValue((StatId)99999, 10L));
+            Assert.IsTrue(stat.SetBaseValue(StatId.AttackPower, 10L));
         }
 
         [Test]
-        public void Slots_CoverEveryStatId()
+        public void BaseSlots_CoverEveryStatId()
         {
             var stat = new Stat();
-            Assert.AreEqual(StatRegistry.AllIds.Count, stat.Slots.Count);
+            Assert.AreEqual(StatRegistry.AllIds.Count, stat.BaseSlots.Count);
 
             foreach (var id in StatRegistry.AllIds)
-                Assert.AreEqual(id, stat.Slots[IndexOfForTest(id)].Id);
+                Assert.AreEqual(id, stat.BaseSlots[IndexOfForTest(id)].Id);
         }
 
         [Test]
@@ -104,7 +104,7 @@ namespace StatSystem.Tests
         {
             var stat = new Stat();
             stat.SetMaxValue(StatId.Defense, 200L);
-            stat.SetValue(StatId.Defense, 999L);
+            stat.SetBaseValue(StatId.Defense, 999L);
             Assert.AreEqual((StatValue)200L, stat.GetValue(StatId.Defense));
         }
 
@@ -119,7 +119,7 @@ namespace StatSystem.Tests
             int fireCount = 0;
 
             stat.Changed += (id, value) => { firedId = id; firedValue = value; fireCount++; };
-            stat.SetValue(StatId.AttackPower, 500L);
+            stat.SetBaseValue(StatId.AttackPower, 500L);
 
             Assert.AreEqual(1, fireCount);
             Assert.AreEqual(StatId.AttackPower, firedId);
@@ -136,7 +136,7 @@ namespace StatSystem.Tests
 
             StatValue firedValue = default;
             stat.Changed += (_, value) => firedValue = value;
-            stat.SetValue(StatId.Defense, 999L);
+            stat.SetBaseValue(StatId.Defense, 999L);
 
             Assert.AreEqual((StatValue)200L, firedValue);
         }
@@ -145,13 +145,13 @@ namespace StatSystem.Tests
         public void Changed_NotFired_WhenValueUnchanged()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 500L);
+            stat.SetBaseValue(StatId.AttackPower, 500L);
 
             int fireCount = 0;
             stat.Changed += (_, __) => fireCount++;
 
-            stat.SetValue(StatId.AttackPower, 500L);
-            stat.AddValue(StatId.AttackPower, 0L);
+            stat.SetBaseValue(StatId.AttackPower, 500L);
+            stat.AddBaseValue(StatId.AttackPower, 0L);
 
             Assert.AreEqual(0, fireCount);
         }
@@ -164,7 +164,7 @@ namespace StatSystem.Tests
             stat.Changed += (_, __) => fireCount++;
 
             var copy = new Stat(stat);
-            copy.SetValue(StatId.AttackPower, 123L);
+            copy.SetBaseValue(StatId.AttackPower, 123L);
 
             Assert.AreEqual(0, fireCount);
         }
@@ -180,8 +180,8 @@ namespace StatSystem.Tests
 
             Assert.That(() =>
             {
-                stat.SetValue(StatId.AttackPower, 500L);
-                stat.AddValue(StatId.AttackPower, 100L);
+                stat.SetBaseValue(StatId.AttackPower, 500L);
+                stat.AddBaseValue(StatId.AttackPower, 100L);
                 sink = stat.GetValue(StatId.AttackPower);
             }, Is.Not.AllocatingGCMemory());
 
@@ -192,12 +192,12 @@ namespace StatSystem.Tests
         public void NamedAccessorRead_DoesNotAllocate()
         {
             var stat = new Stat();
-            stat.SetValue(StatId.AttackPower, 500L);
+            stat.SetBaseValue(StatId.AttackPower, 500L);
             StatValue sink = default;
 
             Assert.That(() =>
             {
-                sink = stat.AttackPower.Value;
+                sink = stat.AttackPower;
             }, Is.Not.AllocatingGCMemory());
 
             Assert.AreEqual((StatValue)500L, sink);
@@ -213,13 +213,13 @@ namespace StatSystem.Tests
             long next = 1;
             Assert.That(() =>
             {
-                stat.SetValue(StatId.AttackPower, next++);
+                stat.SetBaseValue(StatId.AttackPower, next++);
             }, Is.Not.AllocatingGCMemory());
 
             Assert.AreNotEqual(StatValue.Zero, observed);
         }
 
-        //StatRegistry.AllIds 순서가 곧 Slots 인덱스라는 전제를 테스트에서 재현한다.
+        //StatRegistry.AllIds 순서가 곧 BaseSlots 인덱스라는 전제를 테스트에서 재현한다.
         private static int IndexOfForTest(StatId id)
         {
             var ids = StatRegistry.AllIds;

@@ -71,18 +71,18 @@ internal static class Program
     private static long MeasureCurrent()
     {
         var stat = new Stat();
-        stat.SetValue(StatId.AttackPower, 1L);
-        for (int i = 0; i < Warmup; i++) { stat.AddValue(StatId.AttackPower, 1L); }
+        stat.SetBaseValue(StatId.AttackPower, 1L);
+        for (int i = 0; i < Warmup; i++) { stat.AddBaseValue(StatId.AttackPower, 1L); }
 
         long before = Settle();
         StatValue sink = default;
 
         for (int i = 0; i < Iterations; i++)
         {
-            stat.SetValue(StatId.AttackPower, (long)i);
-            stat.AddValue(StatId.AttackPower, 1L);
+            stat.SetBaseValue(StatId.AttackPower, (long)i);
+            stat.AddBaseValue(StatId.AttackPower, 1L);
             sink = stat.GetValue(StatId.AttackPower);
-            sink = stat.AttackPower.Value;
+            sink = stat.AttackPower;
         }
 
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;

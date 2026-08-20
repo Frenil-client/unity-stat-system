@@ -1,5 +1,71 @@
 # Changelog
 
+## 모디파이어 스택 도입 (버프 해제 시 값이 어긋나던 문제 해결)
+
+### 배경
+
+버프나 장비를 `AddValue(+50)`로 걸고 나중에 `AddValue(-50)`으로 푸는 구조였다.
+여기에 MaxValue 클램프가 겹치면 값이 어긋난다.
+
+```
+방어력 180, 상한 200
+  버프 +50  ->  230이지만 상한에 걸려 200 (실제로는 +20만 반영)
+  버프 -50  ->  150            (원래 180이었는데 30이 사라짐)
+```
+
+버프를 받았다 풀었을 뿐인데 스탯이 줄어드는 버그이고, 실서비스라면 유저 CS로 바로 이어진다.
+"더한 만큼 뺀다"는 전제가 클램프 앞에서 깨지는 것이라, 호출부를 조심해서 해결할 수 있는
+종류가 아니다. 구조를 바꿔야 한다.
+
+### 해결
+
+값을 두 층으로 나눴다.
+
+- **기본값(base)** — 레벨업·강화처럼 되돌리지 않는 영구 수치
+- **모디파이어** — 장비·버프·세트 효과처럼 붙였다 뗄 수 있는 보정
+
+최종값은 `(기본값 + Flat 합) × (1 + PercentAdd 합) × Π(1 + PercentMultiply)`를 상한으로 자른
+결과다. 모디파이어를 뗄 때는 빼는 게 아니라 **목록에서 제거하고 기본값부터 다시 계산**하므로,
+클램프가 걸렸든 아니든 원래 값으로 정확히 돌아온다.
+
+적용 순서가 정해져 있어 **추가한 순서와 무관하게 같은 결과**가 나온다. 장비를 어떤 순서로
+착용하든 스탯이 같아야 하기 때문이고, 이 성질을 테스트로 고정했다.
+
+최종값은 **쓰기 시점에 계산해 캐시**에 넣는다. 읽기가 압도적으로 잦으므로 읽기를 배열
+인덱싱 한 번(O(1), 할당 0)으로 만들고, 재계산 비용은 상대적으로 드문 쓰기 쪽에 둔다.
+
+### Breaking Changes
+
+- `SetValue` -> **`SetBaseValue`**, `AddValue` -> **`AddBaseValue`**.
+  이름만 바뀐 게 아니라 "기본값을 건드린다"는 의미가 분명해졌다. 되돌릴 보정이라면
+  이제 `AddModifier`를 써야 한다
+- `GetValue(id)`는 이제 **최종값**을 돌려준다. 모디파이어가 없으면 이전과 같은 값이므로
+  기존 코드의 동작은 그대로다. 기본값이 필요하면 `GetBaseValue(id)`
+- 명명 접근자(`stat.AttackPower`)의 타입이 `ref readonly StatSlot` -> **`StatValue`**.
+  최종값이 계산 결과라 슬롯으로 돌려줄 수 없다. `stat.AttackPower.Value` -> `stat.AttackPower`
+- `Stat.Slots` -> **`Stat.BaseSlots`**. 최종값이 아니라 기본값·상한을 담고 있다는 점을
+  이름에서 드러낸다
+
+### 추가
+
+- `StatModifier`, `StatModifierType`(Flat / PercentAdd / PercentMultiply), `ModifierHandle`
+- `Stat.AddModifier(id, type, value, source)` — 핸들을 돌려준다
+- `Stat.RemoveModifier(handle)` — 하나만 정확히 제거
+- `Stat.RemoveModifiersFrom(source)` — 장비 해제처럼 한 주체의 보정을 일괄 제거 (참조 동일성)
+- `Stat.ClearModifiers()`, `Stat.Modifiers`, `Stat.GetBaseValue`, `Stat.GetMaxValue`
+
+### 검증
+
+`Tests/StatModifierTests.cs` 18종 추가 (레포 전체 45종 -> 63종). 맨 앞 테스트가
+`RemovingModifier_RestoresOriginal_EvenWhenItWasClamped`이고, 이 기능의 존재 이유를 그대로 고정한다.
+적용 순서, 삽입 순서 무관성, 소스별 일괄 제거, 상한에 닿았을 때 통지 억제, 복사 독립성을 함께 고정했다.
+
+읽기와 재계산 경로 모두 `Is.Not.AllocatingGCMemory()` 테스트를 걸었다. 모디파이어 목록은
+`List<T>`의 struct 열거자로 훑으므로 재계산에도 할당이 없으며, `Benchmarks~`의 40만 연산
+기준 0바이트도 그대로 유지된다.
+
+---
+
 ## .meta 파일 추가 (UPM git 설치 대응)
 
 git URL로 설치하면 패키지가 immutable 폴더(Library/PackageCache)에 놓이는데, Unity는 여기에

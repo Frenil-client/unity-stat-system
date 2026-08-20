@@ -13,7 +13,9 @@ RPG에서 범용적으로 사용되는 전투 능력치 구조를 기반으로 �
 - **합산 연산자** - 여러 소스의 스탯을 `+`, `-`로 직관적으로 합산 (퍼센트 곱연산은 `StatValue.ApplyPercent`로 처리)
 - **할당 없는 일괄 처리** - `StatSlot[]` 밀집 배열 + StatId 인덱스 룩업. Reflection과 Dictionary를 모두 걷어내 40만 연산 기준 19.07MB -> **0B**
 - **읽기/쓰기 경로 분리** - 이름으로 읽기는 `ref readonly`(복사본 없음), 쓰기는 `SetValue` 하나로 좁혀 클램프·통지 우회를 컴파일 단계에서 차단
-- **변경 통지** - 값이 실제로 바뀔 때만, 클램프까지 반영된 최종 값으로 `Changed` 발행 (UI 바인딩 연동 지점)
+- **모디파이어 스택** - 기본값 위에 장비·버프를 붙였다 뗄 수 있고, 뗄 때 기본값부터 다시 계산해 값이 어긋나지 않음
+- **최종값 캐싱** - 쓰기 시점에 계산해 두므로 읽기는 배열 인덱싱 한 번 (O(1), 할당 0)
+- **변경 통지** - 최종값이 실제로 바뀔 때만 `Changed` 발행 (UI 바인딩 연동 지점)
 
 ## 구조
 
@@ -23,9 +25,10 @@ StatRegistry        StatId <-> string <-> uint 양방향 매핑
 StatValue           고정소수점 값 타입 (readonly struct, partial)
  ├─ StatValue.cs            생성/변환, Equals/CompareTo/ToString
  └─ StatValue.Operators.cs  +, -, *, /, 비교 연산자, ApplyPercent
-StatSlot            StatId + StatValue Value + StatValue MaxValue 컨테이너 (struct)
+StatSlot            StatId + 기본값 + 상한 컨테이너 (struct)
+StatModifier        붙였다 뗄 수 있는 보정 (struct) + StatModifierType + ModifierHandle
 Stat                캐릭터 스탯 집합체
- └─ Stat.cs                 StatSlot[] 저장소, StatId 인덱스 룩업, ref readonly 접근자, Changed 통지
+ └─ Stat.cs                 기본값 슬롯 + 모디파이어 목록 + 최종값 캐시, Changed 통지
 ```
 
 ## StatId 구간 규칙
@@ -40,19 +43,87 @@ Stat                캐릭터 스탯 집합체
 
 ## 핵심 설계
 
-### 1. Stat 레이어는 합산만 처리
+### 1. 값은 기본값과 모디파이어 두 층으로 나뉜다
 
-곱연산(퍼센트 적용)과 데미지 공식은 이 레이어의 책임이 아니다. `Stat`은 여러 소스의 수치를
-더하고 빼서 "현재 스탯"을 유지하는 것까지만 하고, `AttackPower * (1 + AttackPowerPercent)`
-같은 최종 계산은 소비하는 쪽(데미지 계산 레이어)에서 수행한다.
+되돌리지 않는 수치와 붙였다 뗄 수 있는 수치는 성격이 다르므로 따로 보관한다.
+
+| 층 | 무엇 | 예 |
+|---|---|---|
+| 기본값(base) | 영구 수치 | 레벨업, 강화, 능력치 투자 |
+| 모디파이어 | 붙였다 뗄 수 있는 보정 | 장비, 버프, 세트 효과 |
 
 ```csharp
-// 소스별 슬롯을 합산
-var total = baseAtk + equipBonus + buffBonus;   // StatSlot 연산자
-
-// 캐릭터 스탯에 누적
-stat.AddValue(StatId.AttackPower, 500L);
+stat.SetBaseValue(StatId.AttackPower, 100L);        // 영구
+stat.AddModifier(StatId.AttackPower, StatModifierType.Flat, 50L, sword);   // 임시
 ```
+
+최종값은 이 순서로 접는다.
+
+```
+(기본값 + Flat 합) × (1 + PercentAdd 합) × Π(1 + PercentMultiply)   -> 상한으로 클램프
+```
+
+**왜 나눴는가.** 예전에는 버프를 `AddValue(+50)`으로 걸고 `AddValue(-50)`으로 풀었는데,
+여기에 상한 클램프가 겹치면 값이 어긋났다.
+
+```
+방어력 180, 상한 200
+  버프 +50  ->  230이지만 상한에 걸려 200 (실제로는 +20만 반영)
+  버프 -50  ->  150            (원래 180이었는데 30이 사라짐)
+```
+
+버프를 받았다 풀었을 뿐인데 스탯이 줄어드는 버그다. "더한 만큼 뺀다"는 전제가 클램프 앞에서
+깨지는 것이라, 호출부를 조심해서 막을 수 있는 종류가 아니다.
+
+모디파이어는 뗄 때 빼는 게 아니라 **목록에서 제거하고 기본값부터 다시 계산**한다.
+그래서 클램프가 걸렸든 아니든 원래 값으로 정확히 돌아온다.
+
+```csharp
+stat.SetMaxValue(StatId.Defense, 200L);
+stat.SetBaseValue(StatId.Defense, 180L);
+
+var armor = new object();                 // 실제로는 장비 인스턴스
+stat.AddModifier(StatId.Defense, StatModifierType.Flat, 50L, armor);
+// stat.Defense == 200   (상한)
+
+stat.RemoveModifiersFrom(armor);
+// stat.Defense == 180   (원래대로)
+```
+
+### 1-1. 적용 순서와 제거 방법
+
+| 종류 | 계산 | 예 |
+|---|---|---|
+| `Flat` | 기본값에 그대로 더함 | 공격력 +50 |
+| `PercentAdd` | 서로 합산 후 한 번 곱함 | +30%, +20% -> ×1.5 |
+| `PercentMultiply` | 각각 순차로 곱함 | +30%, +20% -> ×1.3×1.2 |
+
+enum 값이 곧 적용 순서(100 / 200 / 300)이며, **추가한 순서와 무관하게 결과가 같다.**
+장비를 어떤 순서로 착용하든 스탯이 같아야 하기 때문이고, 이 성질은 테스트로 고정되어 있다.
+
+제거는 두 가지다.
+
+```csharp
+var handle = stat.AddModifier(StatId.AttackPower, StatModifierType.Flat, 50L);
+stat.RemoveModifier(handle);              // 이 하나만
+
+stat.RemoveModifiersFrom(armor);          // 이 주체가 붙인 것 전부 (장비 해제)
+```
+
+`source`는 참조 동일성으로 비교하므로 장비나 버프 인스턴스를 그대로 넘기면 된다.
+
+### 1-2. 최종값은 쓰기 시점에 계산한다
+
+모디파이어가 있으면 최종값은 계산 결과다. 읽을 때마다 접으면 UI가 매 프레임 스탯을 읽는
+상황에서 비용이 그대로 드러난다. 그래서 **쓰기 시점에 계산해 캐시에 넣고, 읽기는 배열
+인덱싱 한 번**으로 끝낸다.
+
+읽기가 압도적으로 잦으므로 비용을 드문 쪽(쓰기)에 몰아준 선택이다. 재계산은 모디파이어
+목록을 훑지만 `List<T>`의 struct 열거자를 쓰므로 **재계산 경로에도 할당이 없다.**
+읽기와 재계산 양쪽에 할당 테스트가 걸려 있다.
+
+비용은 모디파이어 전체 개수에 비례한다. 수십 개 규모를 전제한 선택이며, 수천 개가 되면
+StatId별 버킷으로 나눠야 한다.
 
 ### 2. StatId + StatRegistry
 
@@ -71,7 +142,7 @@ def.Value = 999;    // -> 200으로 자동 클램프
 def.MaxValue = 50;  // -> ArgumentException
 ```
 
-### 4. 슬롯 저장소가 배열이고, 쓰기 경로가 하나인 이유
+### 4. 슬롯 저장소가 배열이고, 쓰기 경로가 좁은 이유
 
 초기 구현은 18개 `public StatSlot` 필드를 두고 `Dictionary<StatId, FieldInfo>`로 일괄 처리를 했다.
 Reflection 수집 비용은 static 생성자에서 한 번만 지불하니 괜찮다고 봤는데, 실제 문제는 수집이 아니라
@@ -114,24 +185,26 @@ private static int IndexOf(StatId id)
 }
 ```
 
-이름으로 읽는 경로는 유지하되 `ref readonly`로 노출한다. `ref`라서 24바이트 슬롯이 복사되지 않고,
-`readonly`라서 슬롯을 통한 쓰기가 막힌다.
+이름으로 읽는 경로는 유지하되, 최종값을 돌려주는 **읽기 전용 프로퍼티**로 노출한다.
+최종값은 계산 결과라 슬롯으로 내줄 수 없다.
 
 ```csharp
-public ref readonly StatSlot AttackPower => ref Slot(StatId.AttackPower);
+public StatValue AttackPower => GetValue(StatId.AttackPower);
 
-stat.AttackPower.Value             // OK - 복사본 없이 읽기
-stat.AttackPower.Value = 5000L;    // 컴파일 에러 CS8332
-stat.SetValue(StatId.AttackPower, 5000L);   // 쓰기는 이쪽으로
+stat.AttackPower                            // 최종값 (캐시된 배열 읽기)
+stat.AttackPower = 5000L;                   // 컴파일 에러 - setter가 없다
+stat.SetBaseValue(StatId.AttackPower, 5000L);                          // 기본값
+stat.AddModifier(StatId.AttackPower, StatModifierType.Flat, 500L, buff);  // 보정
 ```
 
-쓰기를 막은 건 성능이 아니라 무결성 때문이다. 슬롯을 직접 대입할 수 있으면 MaxValue 클램프와
+쓰기 경로를 좁힌 건 성능이 아니라 무결성 때문이다. 값을 직접 대입할 수 있으면 상한 클램프와
 아래의 `Changed` 통지를 조용히 건너뛸 수 있고, 그렇게 생긴 불일치는 "UI에 표시된 스탯과 실제 스탯이
-다르다"는 형태로 한참 뒤에 발견된다. 출력을 읽기 전용 타입으로 노출해 역방향 쓰기를 컴파일 에러로
-만드는 방식은 [unity-mvvm](https://github.com/Frenil-client/unity-mvvm)의 `IReadOnlyObservable<T>`와 같은 결정이다.
+다르다"는 형태로 한참 뒤에 발견된다. 출력을 읽기 전용으로 노출해 역방향 쓰기를 막는 방식은
+[unity-mvvm](https://github.com/Frenil-client/unity-mvvm)의 `IReadOnlyObservable<T>`와 같은 결정이다.
 
-`ref readonly`로 넘긴 이득이 방어적 복사로 되돌아가지 않도록 `StatSlot`의 읽기 멤버에는
-`readonly`를 붙였다 (`public StatValue Value { readonly get => _value; set => ... }`).
+내부적으로 슬롯 배열은 여전히 `ref`로 다룬다. 24바이트 `StatSlot`이 복사되지 않도록
+`StatSlot`의 읽기 멤버에는 `readonly`를 붙여 뒀다
+(`public StatValue Value { readonly get => _value; set => ... }`).
 이게 없으면 컴파일러가 멤버 호출마다 슬롯 복사본을 만든다.
 
 ### 5. 변경 통지는 "실제로 저장된 값"으로 발행한다
@@ -139,11 +212,11 @@ stat.SetValue(StatId.AttackPower, 5000L);   // 쓰기는 이쪽으로
 ```csharp
 stat.Changed += (id, value) => Debug.Log($"{StatRegistry.GetName(id)} -> {value}");
 
-stat.SetValue(StatId.AttackPower, 100L);  // 발행
-stat.SetValue(StatId.AttackPower, 100L);  // 값이 같아 발행되지 않음
+stat.SetBaseValue(StatId.AttackPower, 100L);  // 발행
+stat.SetBaseValue(StatId.AttackPower, 100L);  // 값이 같아 발행되지 않음
 
 stat.SetMaxValue(StatId.Defense, 200L);
-stat.SetValue(StatId.Defense, 999L);      // 999가 아니라 클램프된 200이 발행됨
+stat.SetBaseValue(StatId.Defense, 999L);      // 999가 아니라 클램프된 200이 발행됨
 ```
 
 요청값을 그대로 흘리면 UI가 실제 스탯과 다른 숫자를 표시하게 되므로, 통지는 항상 슬롯에서 다시 읽은
@@ -169,7 +242,8 @@ Runtime/
 ├─ StatRegistry.cs         StatId <-> string <-> uint 양방향 매핑
 ├─ StatValue.cs            고정소수점 값 타입 (struct)
 ├─ StatValue.Operators.cs  +, -, *, /, 비교 연산자, ApplyPercent
-├─ StatSlot.cs             StatId + Value + MaxValue 컨테이너 (struct)
+├─ StatSlot.cs             StatId + 기본값 + 상한 컨테이너 (struct)
+├─ StatModifier.cs         모디파이어 · 종류 · 핸들 (struct)
 └─ Stat.cs                 캐릭터 스탯 집합체
 Benchmarks~/
 ├─ StatAllocation.csproj   할당 벤치마크 (CI가 매 푸시마다 실행)
@@ -203,7 +277,7 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 ## 테스트
 
 `Window ▸ General ▸ Test Runner ▸ EditMode ▸ Run All`
-(`com.unity.test-framework` 필요 · EditMode 테스트 45종 — StatValue / StatSlot / StatRegistry / Stat)
+(`com.unity.test-framework` 필요 · EditMode 테스트 63종 — StatValue / StatSlot / StatRegistry / Stat / StatModifier)
 
 할당 회귀를 막는 테스트가 포함되어 있다. `BulkAccess_DoesNotAllocate`와
 `NamedAccessorRead_DoesNotAllocate`는 `Is.Not.AllocatingGCMemory()`로 일괄 처리 경로와
@@ -216,7 +290,7 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 | Job | 하는 일 | Unity 라이선스 |
 |---|---|---|
 | `core-build` | Runtime 컴파일 + 할당 벤치마크 (0 B 아니면 실패) | 불필요 |
-| `editmode-tests` | game-ci로 EditMode 테스트 45종 실행 | 필요 |
+| `editmode-tests` | game-ci로 EditMode 테스트 63종 실행 | 필요 |
 
 `core-build`는 컴파일 회귀를 잡는 동시에 "Runtime은 순수 C#이며 Unity에 의존하지 않는다"는
 위의 주장을 빌드로 강제한다. Runtime에 UnityEngine 참조가 들어오는 순간 이 job이 깨진다
