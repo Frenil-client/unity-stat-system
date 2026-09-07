@@ -281,7 +281,7 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 
 할당 회귀를 막는 테스트가 포함되어 있다. `BulkAccess_DoesNotAllocate`와
 `NamedAccessorRead_DoesNotAllocate`는 `Is.Not.AllocatingGCMemory()`로 일괄 처리 경로와
-명명 접근자 읽기가 할당 없이 도는지 확인하며, 둘 다 이전 Reflection 구현에서는 실패한다.
+명명 접근자 읽기가 할당 없이 도는지 확인한다. 이 경로에 할당이 되살아나면 둘이 먼저 깨진다.
 
 ## CI
 
@@ -302,7 +302,7 @@ Package Manager에서 이 패키지를 선택 → **Samples ▸ Import** (원본
 빠지는 6종은 `Is.Not.AllocatingGCMemory()`를 쓰는 `StatAllocationTests.cs`뿐이고,
 그 성질은 할당 벤치마크가 수치까지 비교해 대신 검증합니다.
 
-### 왜 Unity EditMode 테스트를 CI에서 돌리지 않는가
+### Unity 없이 도는 CI를 고른 이유
 
 game-ci로 시도했지만 Unity Personal 라이선스는 `.ulf` 안에 MAC 주소와 머신 ID가 박힌
 **하드웨어 바인딩** 방식이라, 실행마다 새로 만들어지는 GitHub 러너에서는 활성화되지 않습니다.
