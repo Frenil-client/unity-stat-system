@@ -4,6 +4,7 @@
   "displayName": "Generic Stat System",
   "description": "RPG 캐릭터 스탯 시스템. long 고정소수점 값 타입으로 할당 없는 결정적 연산, 기본값 + 모디파이어(장비·버프) 2층 구조, 최종값 캐싱과 변경 통지, MaxValue 무결성 검사.",
   "unity": "2021.2",
+  "license": "MIT",
   "keywords": [
     "rpg",
     "stat",
